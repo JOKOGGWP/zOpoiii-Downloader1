@@ -34,6 +34,8 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP project tidak ditemukan."
+            echo ""
+            echo "Isi repository:"
             ls -lah
             exit 1
           fi
@@ -70,6 +72,7 @@ jobs:
 
           echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
 
+          echo ""
           echo "Project root:"
           echo "$ROOT"
 
@@ -86,6 +89,8 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
+          set -e
+
           yes | sdkmanager --licenses || true
 
           sdkmanager \
@@ -132,7 +137,10 @@ jobs:
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          set -e
+
           gradle clean assembleDebug \
+            -x processDebugGoogleServices \
             --stacktrace \
             --no-daemon \
             --console=plain
