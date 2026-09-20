@@ -23,7 +23,7 @@ jobs:
 
 
       # ============================================================
-      # 2. FIND ZIP
+      # 2. FIND ZIP PROJECT
       # ============================================================
       - name: Find ZIP project
         id: zip
@@ -39,11 +39,14 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP project tidak ditemukan."
+            echo
+            echo "Isi repository:"
             ls -lah
             exit 1
           fi
 
           echo "ZIP ditemukan: $ZIP_FILE"
+
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
 
@@ -62,11 +65,13 @@ jobs:
 
           echo "Project berhasil diekstrak."
 
+          echo
+          echo "Project files:"
           find project -maxdepth 3 -type f | head -100
 
 
       # ============================================================
-      # 4. DETECT PROJECT ROOT
+      # 4. DETECT GRADLE PROJECT
       # ============================================================
       - name: Detect Gradle project
         id: project
@@ -100,6 +105,7 @@ jobs:
           fi
 
           echo "Gradle project: $PROJECT_DIR"
+
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
 
@@ -114,7 +120,7 @@ jobs:
 
 
       # ============================================================
-      # 6. ANDROID SDK
+      # 6. DETECT ANDROID SDK
       # ============================================================
       - name: Detect Android SDK
         shell: bash
@@ -157,7 +163,7 @@ jobs:
 
 
       # ============================================================
-      # 7. VERIFY SDK
+      # 7. VERIFY ANDROID SDK
       # ============================================================
       - name: Verify Android SDK
         shell: bash
@@ -166,16 +172,16 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
           echo
-          echo "Platforms:"
+          echo "Android platforms:"
           ls -lah "$ANDROID_SDK_ROOT/platforms" || true
 
           echo
-          echo "Build tools:"
+          echo "Android build tools:"
           ls -lah "$ANDROID_SDK_ROOT/build-tools" || true
 
 
       # ============================================================
-      # 8. INSTALL SDK 36
+      # 8. INSTALL ANDROID SDK 36
       # ============================================================
       - name: Install Android SDK 36
         shell: bash
@@ -185,6 +191,8 @@ jobs:
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
           if [ -x "$SDKMANAGER" ]; then
+
+            echo "sdkmanager ditemukan."
 
             if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" ]; then
 
@@ -201,7 +209,6 @@ jobs:
 
             fi
 
-
             if [ ! -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ]; then
 
               echo "Installing Build Tools 36.0.0..."
@@ -217,13 +224,13 @@ jobs:
           else
 
             echo "sdkmanager tidak tersedia."
-            echo "Menggunakan SDK bawaan runner."
+            echo "Menggunakan SDK bawaan GitHub runner."
 
           fi
 
 
       # ============================================================
-      # 9. GRADLE 9.3.1
+      # 9. SETUP GRADLE
       # ============================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -253,13 +260,14 @@ jobs:
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          echo "Project:"
+          echo "Project directory:"
           pwd
 
           echo
           echo "Gradle files:"
 
-          find . -maxdepth 3 \
+          find . \
+            -maxdepth 3 \
             \( \
               -name "*.gradle" \
               -o -name "*.gradle.kts" \
@@ -269,7 +277,11 @@ jobs:
 
 
       # ============================================================
-      # 12. CREATE TEMPORARY GOOGLE SERVICES FILE
+      # 12. CREATE TEMPORARY GOOGLE SERVICES JSON
+      #
+      # ZIP ASLI TIDAK DIUBAH.
+      #
+      # File ini hanya dibuat setelah ZIP diekstrak di runner.
       # ============================================================
       - name: Create temporary google-services.json
         working-directory: ${{ steps.project.outputs.project_dir }}
@@ -293,15 +305,22 @@ jobs:
                   "android_client_info": {
                     "package_name": "com.zopoiii.downloader"
                   }
-                }
+                },
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                  }
+                ]
               }
             ],
             "configuration_version": "1"
           }
           EOF
 
-          echo "Temporary google-services.json dibuat."
+          echo "Temporary google-services.json berhasil dibuat."
 
+          echo
+          echo "File:"
           ls -lah app/google-services.json
 
 
@@ -323,6 +342,12 @@ jobs:
 
       # ============================================================
       # 14. BUILD APK
+      #
+      # PENTING:
+      # TIDAK ADA -x processDebugGoogleServices
+      #
+      # Task tersebut harus dijalankan karena
+      # mapDebugSourceSetPaths membutuhkan output-nya.
       # ============================================================
       - name: Build APK
         id: build
@@ -331,6 +356,7 @@ jobs:
         run: |
           set -o pipefail
 
+          echo
           echo "========================================"
           echo "BUILD zOpoiii DOWNLOADER"
           echo "========================================"
@@ -346,7 +372,7 @@ jobs:
 
 
       # ============================================================
-      # 15. DIAGNOSE
+      # 15. DIAGNOSE BUILD FAILURE
       # ============================================================
       - name: Diagnose build failure
         if: failure()
@@ -359,13 +385,15 @@ jobs:
 
           if [ ! -f "$GITHUB_WORKSPACE/build.log" ]; then
 
-            echo "build.log belum tersedia."
-            echo "Kegagalan terjadi sebelum tahap Build APK."
+            echo "build.log tidak tersedia."
+            echo "Build gagal sebelum log build dibuat."
 
           else
 
             echo
-            echo "===== FAILURE ====="
+            echo "========================================"
+            echo "FAILURE"
+            echo "========================================"
 
             grep -n -i -E \
               "FAILURE:|What went wrong:|Execution failed|Caused by:" \
@@ -374,16 +402,53 @@ jobs:
 
 
             echo
-            echo "===== ERRORS ====="
+            echo "========================================"
+            echo "GOOGLE SERVICES ERRORS"
+            echo "========================================"
 
             grep -n -i -E \
-              "error:|ERROR|AAPT|Android resource linking failed|Duplicate class|Could not resolve|Could not find|Resource missing" \
+              "google-services|api_key|current_key|google_app_id|project_number" \
               "$GITHUB_WORKSPACE/build.log" \
-              | tail -300 || true
+              | tail -200 || true
 
 
             echo
-            echo "===== LAST 400 LINES ====="
+            echo "========================================"
+            echo "RESOURCE / AAPT ERRORS"
+            echo "========================================"
+
+            grep -n -i -E \
+              "AAPT|Android resource linking failed|failed linking references|resource .* not found" \
+              "$GITHUB_WORKSPACE/build.log" \
+              | tail -200 || true
+
+
+            echo
+            echo "========================================"
+            echo "DEPENDENCY ERRORS"
+            echo "========================================"
+
+            grep -n -i -E \
+              "Resource missing|Could not resolve|Could not find|Could not GET|Could not HEAD|HTTP [45][0-9][0-9]|timeout|SSL|PKIX" \
+              "$GITHUB_WORKSPACE/build.log" \
+              | tail -200 || true
+
+
+            echo
+            echo "========================================"
+            echo "DUPLICATE CLASS ERRORS"
+            echo "========================================"
+
+            grep -n -i -E \
+              "Duplicate class|duplicate classes" \
+              "$GITHUB_WORKSPACE/build.log" \
+              | tail -200 || true
+
+
+            echo
+            echo "========================================"
+            echo "LAST 400 LINES"
+            echo "========================================"
 
             tail -400 "$GITHUB_WORKSPACE/build.log"
 
@@ -391,10 +456,10 @@ jobs:
 
 
       # ============================================================
-      # 16. UPLOAD LOG
+      # 16. UPLOAD BUILD LOG
       # ============================================================
       - name: Upload build log
-        if: always() && steps.build.outcome == 'failure'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
@@ -410,7 +475,10 @@ jobs:
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          echo "APK hasil build:"
+          echo
+          echo "========================================"
+          echo "APK HASIL BUILD"
+          echo "========================================"
 
           find . \
             -type f \
