@@ -16,11 +16,15 @@ jobs:
 
       - name: Show repository files
         run: |
-          echo "=== Repository ==="
+          echo "=========================================="
+          echo "REPOSITORY"
+          echo "=========================================="
+
+          pwd
           ls -lah
 
           echo ""
-          echo "=== ZIP files ==="
+          echo "=== ZIP FILES ==="
           find . -maxdepth 1 -type f -iname "*.zip" -print
 
       - name: Find and extract project ZIP
@@ -40,21 +44,31 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Project ZIP ditemukan:"
           echo "$ZIP_FILE"
 
           unzip -q "$ZIP_FILE" -d project
 
           echo ""
-          echo "=== Extract selesai ==="
+          echo "=========================================="
+          echo "EXTRACT SELESAI"
+          echo "=========================================="
+
           find project -maxdepth 3 -type f | head -100
 
       - name: Detect project root
         run: |
           set -e
 
+          echo "=========================================="
+          echo "DETECT PROJECT ROOT"
+          echo "=========================================="
+
           if [ -f "project/settings.gradle.kts" ] || [ -f "project/settings.gradle" ]; then
             echo "PROJECT_DIR=project" >> "$GITHUB_ENV"
+
+            echo "Project root: project"
             exit 0
           fi
 
@@ -64,7 +78,11 @@ jobs:
 
           if [ -z "$FOUND" ]; then
             echo "ERROR: settings.gradle(.kts) tidak ditemukan."
+
+            echo ""
+            echo "Project files:"
             find project -maxdepth 5 -type f
+
             exit 1
           fi
 
@@ -91,6 +109,10 @@ jobs:
         run: |
           set -e
 
+          echo "=========================================="
+          echo "ANDROID SDK"
+          echo "=========================================="
+
           yes | sdkmanager --licenses || true
 
           sdkmanager \
@@ -106,6 +128,11 @@ jobs:
       - name: Check Android project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          echo "=========================================="
+          echo "ANDROID PROJECT"
+          echo "=========================================="
+
+          echo ""
           echo "=== PROJECT ROOT ==="
           pwd
 
@@ -127,28 +154,105 @@ jobs:
           echo "=== GRADLE FILES ==="
 
           find . -maxdepth 3 \
-            \( -name "build.gradle" \
-            -o -name "build.gradle.kts" \
-            -o -name "settings.gradle" \
-            -o -name "settings.gradle.kts" \
-            -o -name "libs.versions.toml" \) \
+            \( \
+              -name "build.gradle" \
+              -o -name "build.gradle.kts" \
+              -o -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \
+              -o -name "libs.versions.toml" \
+            \) \
             -print
 
-      - name: Build APK
+      - name: Check Gradle version
+        run: |
+          echo "=========================================="
+          echo "GRADLE VERSION"
+          echo "=========================================="
+
+          gradle --version
+
+      - name: Inspect dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          set -e
+          echo "=========================================="
+          echo "DEBUG RUNTIME DEPENDENCIES"
+          echo "=========================================="
+
+          gradle :app:dependencies \
+            --configuration debugRuntimeClasspath \
+            --no-daemon \
+            --console=plain \
+            > dependencies.log 2>&1 || true
+
+          cat dependencies.log
+
+      - name: Build APK with diagnostics
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -o pipefail
+
+          echo "=========================================="
+          echo "BUILD APK"
+          echo "=========================================="
 
           gradle clean assembleDebug \
             -x processDebugGoogleServices \
             --stacktrace \
+            --info \
             --no-daemon \
-            --console=plain
+            --console=plain 2>&1 | tee build.log
 
-      - name: Find generated APK
+      - name: Diagnose build failure
+        if: failure()
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "=== GENERATED APK ==="
+          echo ""
+          echo "=========================================="
+          echo "BUILD FAILURE DIAGNOSTICS"
+          echo "=========================================="
+
+          echo ""
+          echo "=========================================="
+          echo "DUPLICATE CLASS ERRORS"
+          echo "=========================================="
+
+          grep -i -E \
+            "Duplicate class|duplicate class|was found in|already defined|conflict" \
+            build.log || true
+
+          echo ""
+          echo "=========================================="
+          echo "ERROR LINES"
+          echo "=========================================="
+
+          grep -i -E \
+            "FAILURE|ERROR|FAILED|Caused by:" \
+            build.log | tail -200 || true
+
+          echo ""
+          echo "=========================================="
+          echo "LAST 300 BUILD LOG LINES"
+          echo "=========================================="
+
+          tail -300 build.log
+
+          echo ""
+          echo "=========================================="
+          echo "DEPENDENCY TREE"
+          echo "=========================================="
+
+          gradle :app:dependencies \
+            --configuration debugRuntimeClasspath \
+            --no-daemon \
+            --console=plain || true
+
+      - name: Find generated APK
+        if: success()
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "=========================================="
+          echo "GENERATED APK"
+          echo "=========================================="
 
           find app/build/outputs/apk \
             -type f \
@@ -165,6 +269,7 @@ jobs:
           fi
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zOpoiii-Downloader
