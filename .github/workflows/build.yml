@@ -14,12 +14,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Show repository files
+      - name: Show repository
         run: |
-          echo "=========================================="
-          echo "REPOSITORY"
-          echo "=========================================="
-
+          echo "=== REPOSITORY ==="
           pwd
           ls -lah
 
@@ -38,37 +35,26 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP project tidak ditemukan."
-            echo ""
-            echo "Isi repository:"
             ls -lah
             exit 1
           fi
 
-          echo ""
-          echo "Project ZIP ditemukan:"
+          echo "Project ZIP:"
           echo "$ZIP_FILE"
 
           unzip -q "$ZIP_FILE" -d project
 
           echo ""
-          echo "=========================================="
-          echo "EXTRACT SELESAI"
-          echo "=========================================="
-
+          echo "=== EXTRACTED PROJECT ==="
           find project -maxdepth 3 -type f | head -100
 
       - name: Detect project root
         run: |
           set -e
 
-          echo "=========================================="
-          echo "DETECT PROJECT ROOT"
-          echo "=========================================="
-
           if [ -f "project/settings.gradle.kts" ] || [ -f "project/settings.gradle" ]; then
             echo "PROJECT_DIR=project" >> "$GITHUB_ENV"
-
-            echo "Project root: project"
+            echo "PROJECT_DIR=project"
             exit 0
           fi
 
@@ -78,11 +64,7 @@ jobs:
 
           if [ -z "$FOUND" ]; then
             echo "ERROR: settings.gradle(.kts) tidak ditemukan."
-
-            echo ""
-            echo "Project files:"
             find project -maxdepth 5 -type f
-
             exit 1
           fi
 
@@ -90,9 +72,7 @@ jobs:
 
           echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "Project root:"
-          echo "$ROOT"
+          echo "PROJECT_DIR=$ROOT"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -100,12 +80,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: ""
-
-      - name: Install Android SDK packages
+      - name: Detect Android SDK
         run: |
           set -e
 
@@ -113,12 +88,78 @@ jobs:
           echo "ANDROID SDK"
           echo "=========================================="
 
-          yes | sdkmanager --licenses || true
+          if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
+          elif [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK="$ANDROID_SDK_ROOT"
+          elif [ -d "/usr/local/lib/android/sdk" ]; then
+            SDK="/usr/local/lib/android/sdk"
+          else
+            echo "ERROR: Android SDK tidak ditemukan."
+            exit 1
+          fi
 
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
+          echo "ANDROID SDK:"
+          echo "$SDK"
+
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+          echo ""
+          echo "=== SDK DIRECTORIES ==="
+          ls -lah "$SDK"
+
+      - name: Install Android SDK packages
+        run: |
+          set -e
+
+          SDK="$ANDROID_HOME"
+
+          echo "=========================================="
+          echo "ANDROID SDK PACKAGES"
+          echo "=========================================="
+
+          echo ""
+          echo "=== INSTALLED PLATFORMS ==="
+          ls -lah "$SDK/platforms" 2>/dev/null || true
+
+          echo ""
+          echo "=== INSTALLED BUILD TOOLS ==="
+          ls -lah "$SDK/build-tools" 2>/dev/null || true
+
+          echo ""
+          echo "=== CHECK REQUIRED SDK ==="
+
+          if [ ! -d "$SDK/platforms/android-36" ]; then
+            echo "Android 36 belum tersedia."
+
+            if command -v sdkmanager >/dev/null 2>&1; then
+              yes | sdkmanager --licenses || true
+              sdkmanager "platforms;android-36"
+            else
+              echo "ERROR: sdkmanager tidak tersedia."
+              exit 1
+            fi
+          fi
+
+          if [ ! -d "$SDK/build-tools/36.0.0" ]; then
+            echo "Build Tools 36.0.0 belum tersedia."
+
+            if command -v sdkmanager >/dev/null 2>&1; then
+              sdkmanager "build-tools;36.0.0"
+            else
+              echo "ERROR: sdkmanager tidak tersedia."
+              exit 1
+            fi
+          fi
+
+          echo ""
+          echo "=== FINAL SDK ==="
+          ls -lah "$SDK/platforms"
+          ls -lah "$SDK/build-tools"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -133,26 +174,19 @@ jobs:
           echo "=========================================="
 
           echo ""
-          echo "=== PROJECT ROOT ==="
+          echo "PROJECT:"
           pwd
 
           echo ""
-          echo "=== PROJECT FILES ==="
+          echo "FILES:"
           ls -lah
 
           echo ""
-          echo "=== APP DIRECTORY ==="
-
-          if [ -d "app" ]; then
-            ls -lah app
-          else
-            echo "ERROR: app directory tidak ditemukan."
-            exit 1
-          fi
+          echo "APP:"
+          ls -lah app
 
           echo ""
-          echo "=== GRADLE FILES ==="
-
+          echo "GRADLE FILES:"
           find . -maxdepth 3 \
             \( \
               -name "build.gradle" \
@@ -163,30 +197,23 @@ jobs:
             \) \
             -print
 
-      - name: Check Gradle version
+      - name: Check Gradle
         run: |
-          echo "=========================================="
-          echo "GRADLE VERSION"
-          echo "=========================================="
-
           gradle --version
 
       - name: Inspect dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "=========================================="
-          echo "DEBUG RUNTIME DEPENDENCIES"
-          echo "=========================================="
-
           gradle :app:dependencies \
             --configuration debugRuntimeClasspath \
             --no-daemon \
             --console=plain \
             > dependencies.log 2>&1 || true
 
+          echo "=== DEPENDENCIES ==="
           cat dependencies.log
 
-      - name: Build APK with diagnostics
+      - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -o pipefail
@@ -208,45 +235,34 @@ jobs:
         run: |
           echo ""
           echo "=========================================="
-          echo "BUILD FAILURE DIAGNOSTICS"
+          echo "BUILD FAILURE"
           echo "=========================================="
 
           echo ""
-          echo "=========================================="
-          echo "DUPLICATE CLASS ERRORS"
-          echo "=========================================="
+          echo "=== DUPLICATE CLASS ==="
+
+          grep -i -A 20 -B 10 \
+            "Duplicate class" build.log || true
+
+          echo ""
+          echo "=== FAILED TASK ==="
+
+          grep -i -A 15 -B 10 \
+            "> Task .* FAILED" build.log || true
+
+          echo ""
+          echo "=== ERRORS ==="
 
           grep -i -E \
-            "Duplicate class|duplicate class|was found in|already defined|conflict" \
-            build.log || true
+            "error:|ERROR:|FAILURE|FAILED|Caused by:" \
+            build.log | tail -250 || true
 
           echo ""
-          echo "=========================================="
-          echo "ERROR LINES"
-          echo "=========================================="
+          echo "=== LAST 200 LINES ==="
 
-          grep -i -E \
-            "FAILURE|ERROR|FAILED|Caused by:" \
-            build.log | tail -200 || true
+          tail -200 build.log
 
-          echo ""
-          echo "=========================================="
-          echo "LAST 300 BUILD LOG LINES"
-          echo "=========================================="
-
-          tail -300 build.log
-
-          echo ""
-          echo "=========================================="
-          echo "DEPENDENCY TREE"
-          echo "=========================================="
-
-          gradle :app:dependencies \
-            --configuration debugRuntimeClasspath \
-            --no-daemon \
-            --console=plain || true
-
-      - name: Find generated APK
+      - name: Find APK
         if: success()
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
