@@ -16,14 +16,14 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CHECKOUT REPOSITORY
+      # 1. CHECKOUT
       # ============================================================
       - name: Checkout
         uses: actions/checkout@v4
 
 
       # ============================================================
-      # 2. FIND ZIP PROJECT
+      # 2. FIND ZIP
       # ============================================================
       - name: Find ZIP project
         id: zip
@@ -39,15 +39,11 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP project tidak ditemukan."
-            echo
-            echo "Isi repository:"
             ls -lah
             exit 1
           fi
 
-          echo "ZIP ditemukan:"
-          echo "$ZIP_FILE"
-
+          echo "ZIP ditemukan: $ZIP_FILE"
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
 
@@ -66,13 +62,11 @@ jobs:
 
           echo "Project berhasil diekstrak."
 
-          echo
-          echo "Struktur project:"
           find project -maxdepth 3 -type f | head -100
 
 
       # ============================================================
-      # 4. DETECT GRADLE PROJECT
+      # 4. DETECT PROJECT ROOT
       # ============================================================
       - name: Detect Gradle project
         id: project
@@ -97,7 +91,7 @@ jobs:
               -print -quit)
 
             if [ -z "$SETTINGS" ]; then
-              echo "ERROR: settings.gradle atau settings.gradle.kts tidak ditemukan."
+              echo "ERROR: settings.gradle(.kts) tidak ditemukan."
               exit 1
             fi
 
@@ -105,9 +99,7 @@ jobs:
 
           fi
 
-          echo "Gradle project:"
-          echo "$PROJECT_DIR"
-
+          echo "Gradle project: $PROJECT_DIR"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
 
@@ -122,7 +114,7 @@ jobs:
 
 
       # ============================================================
-      # 6. DETECT ANDROID SDK
+      # 6. ANDROID SDK
       # ============================================================
       - name: Detect Android SDK
         shell: bash
@@ -150,8 +142,7 @@ jobs:
 
           fi
 
-          echo "Android SDK:"
-          echo "$SDK"
+          echo "Android SDK: $SDK"
 
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
@@ -166,7 +157,7 @@ jobs:
 
 
       # ============================================================
-      # 7. VERIFY ANDROID SDK
+      # 7. VERIFY SDK
       # ============================================================
       - name: Verify Android SDK
         shell: bash
@@ -175,16 +166,16 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
           echo
-          echo "Installed Android platforms:"
+          echo "Platforms:"
           ls -lah "$ANDROID_SDK_ROOT/platforms" || true
 
           echo
-          echo "Installed Android build tools:"
+          echo "Build tools:"
           ls -lah "$ANDROID_SDK_ROOT/build-tools" || true
 
 
       # ============================================================
-      # 8. INSTALL ANDROID 36 / BUILD TOOLS 36
+      # 8. INSTALL SDK 36
       # ============================================================
       - name: Install Android SDK 36
         shell: bash
@@ -194,8 +185,6 @@ jobs:
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
           if [ -x "$SDKMANAGER" ]; then
-
-            echo "sdkmanager ditemukan."
 
             if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" ]; then
 
@@ -228,13 +217,13 @@ jobs:
           else
 
             echo "sdkmanager tidak tersedia."
-            echo "Menggunakan Android SDK bawaan runner."
+            echo "Menggunakan SDK bawaan runner."
 
           fi
 
 
       # ============================================================
-      # 9. SETUP GRADLE 9.3.1
+      # 9. GRADLE 9.3.1
       # ============================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -244,39 +233,7 @@ jobs:
 
 
       # ============================================================
-      # 10. CONFIGURE MAVEN REPOSITORIES
-      # ============================================================
-      - name: Configure Gradle repositories
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p "$HOME/.gradle"
-
-          cat > "$HOME/.gradle/init.gradle" <<'EOF'
-          allprojects {
-              buildscript {
-                  repositories {
-                      google()
-                      mavenCentral()
-                  }
-              }
-
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          EOF
-
-          echo "Gradle init.gradle:"
-          echo "----------------------------------------"
-          cat "$HOME/.gradle/init.gradle"
-          echo "----------------------------------------"
-
-
-      # ============================================================
-      # 11. VERIFY JAVA / GRADLE
+      # 10. VERIFY JAVA / GRADLE
       # ============================================================
       - name: Verify Java and Gradle
         shell: bash
@@ -290,39 +247,29 @@ jobs:
 
 
       # ============================================================
-      # 12. SHOW PROJECT
+      # 11. INSPECT PROJECT
       # ============================================================
       - name: Inspect project
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          echo "Project directory:"
+          echo "Project:"
           pwd
 
           echo
-          echo "Project files:"
-          find . -maxdepth 3 -type f | sort | head -200
-
-          echo
           echo "Gradle files:"
+
           find . -maxdepth 3 \
             \( \
               -name "*.gradle" \
-              -o \
-              -name "*.gradle.kts" \
-              -o \
-              -name "libs.versions.toml" \
+              -o -name "*.gradle.kts" \
+              -o -name "libs.versions.toml" \
             \) \
             -print | sort
 
 
       # ============================================================
-      # 13. CREATE TEMPORARY GOOGLE SERVICES CONFIG
-      #
-      # IMPORTANT:
-      # ZIP ASLI TIDAK DIUBAH.
-      #
-      # File ini hanya dibuat di GitHub Actions runner.
+      # 12. CREATE TEMPORARY GOOGLE SERVICES FILE
       # ============================================================
       - name: Create temporary google-services.json
         working-directory: ${{ steps.project.outputs.project_dir }}
@@ -353,15 +300,13 @@ jobs:
           }
           EOF
 
-          echo "Temporary google-services.json berhasil dibuat."
+          echo "Temporary google-services.json dibuat."
 
-          echo
-          echo "File:"
           ls -lah app/google-services.json
 
 
       # ============================================================
-      # 14. CLEAN
+      # 13. CLEAN
       # ============================================================
       - name: Clean project
         working-directory: ${{ steps.project.outputs.project_dir }}
@@ -377,21 +322,15 @@ jobs:
 
 
       # ============================================================
-      # 15. BUILD APK
-      #
-      # JANGAN menggunakan:
-      # -x processDebugGoogleServices
-      #
-      # Karena task tersebut memang dibutuhkan oleh
-      # mapDebugSourceSetPaths.
+      # 14. BUILD APK
       # ============================================================
       - name: Build APK
+        id: build
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -o pipefail
 
-          echo
           echo "========================================"
           echo "BUILD zOpoiii DOWNLOADER"
           echo "========================================"
@@ -407,7 +346,7 @@ jobs:
 
 
       # ============================================================
-      # 16. DIAGNOSTIC JIKA BUILD GAGAL
+      # 15. DIAGNOSE
       # ============================================================
       - name: Diagnose build failure
         if: failure()
@@ -420,68 +359,42 @@ jobs:
 
           if [ ! -f "$GITHUB_WORKSPACE/build.log" ]; then
 
-            echo "build.log tidak ditemukan."
-            exit 0
+            echo "build.log belum tersedia."
+            echo "Kegagalan terjadi sebelum tahap Build APK."
+
+          else
+
+            echo
+            echo "===== FAILURE ====="
+
+            grep -n -i -E \
+              "FAILURE:|What went wrong:|Execution failed|Caused by:" \
+              "$GITHUB_WORKSPACE/build.log" \
+              | tail -200 || true
+
+
+            echo
+            echo "===== ERRORS ====="
+
+            grep -n -i -E \
+              "error:|ERROR|AAPT|Android resource linking failed|Duplicate class|Could not resolve|Could not find|Resource missing" \
+              "$GITHUB_WORKSPACE/build.log" \
+              | tail -300 || true
+
+
+            echo
+            echo "===== LAST 400 LINES ====="
+
+            tail -400 "$GITHUB_WORKSPACE/build.log"
 
           fi
 
-          echo
-          echo "========================================"
-          echo "FAILURE / EXECUTION ERRORS"
-          echo "========================================"
-
-          grep -n -i -E \
-            "FAILURE:|What went wrong:|Execution failed|Caused by:" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-
-          echo
-          echo "========================================"
-          echo "RESOURCE / AAPT ERRORS"
-          echo "========================================"
-
-          grep -n -i -E \
-            "AAPT|Android resource linking failed|failed linking references|resource .* not found" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-
-          echo
-          echo "========================================"
-          echo "DEPENDENCY ERRORS"
-          echo "========================================"
-
-          grep -n -i -E \
-            "Resource missing|Could not resolve|Could not find|Could not GET|Could not HEAD|HTTP [45][0-9][0-9]|timeout|SSL|PKIX" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-
-          echo
-          echo "========================================"
-          echo "DUPLICATE CLASS ERRORS"
-          echo "========================================"
-
-          grep -n -i -E \
-            "Duplicate class|duplicate classes" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-
-          echo
-          echo "========================================"
-          echo "LAST 400 LINES"
-          echo "========================================"
-
-          tail -400 "$GITHUB_WORKSPACE/build.log"
-
 
       # ============================================================
-      # 17. UPLOAD BUILD LOG
+      # 16. UPLOAD LOG
       # ============================================================
       - name: Upload build log
-        if: always()
+        if: always() && steps.build.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: build-log
@@ -490,17 +403,14 @@ jobs:
 
 
       # ============================================================
-      # 18. FIND APK
+      # 17. FIND APK
       # ============================================================
       - name: Find APK
         if: success()
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          echo
-          echo "========================================"
-          echo "APK HASIL BUILD"
-          echo "========================================"
+          echo "APK hasil build:"
 
           find . \
             -type f \
@@ -509,7 +419,7 @@ jobs:
 
 
       # ============================================================
-      # 19. UPLOAD APK
+      # 18. UPLOAD APK
       # ============================================================
       - name: Upload APK
         if: success()
