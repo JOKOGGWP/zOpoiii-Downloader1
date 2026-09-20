@@ -27,12 +27,11 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: ZIP project tidak ditemukan."
-            echo "Isi repository:"
             ls -lah
             exit 1
           fi
 
-          echo "ZIP ditemukan: $ZIP_FILE"
+          echo "ZIP: $ZIP_FILE"
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Extract project
@@ -45,7 +44,7 @@ jobs:
 
           unzip -q "${{ steps.zip.outputs.zip_file }}" -d project
 
-          echo "Isi project:"
+          echo "Project files:"
           find project -maxdepth 3 -type f | head -100
 
       - name: Detect Gradle project
@@ -54,16 +53,16 @@ jobs:
         run: |
           set -e
 
-          if [ -f "project/settings.gradle.kts" ] || [ -f "project/settings.gradle" ]; then
+          if [ -f "project/settings.gradle.kts" ] || \
+             [ -f "project/settings.gradle" ]; then
             PROJECT_DIR="project"
           else
-            SETTINGS=$(find project -maxdepth 4 \
+            SETTINGS=$(find project -maxdepth 5 \
               \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
               -print -quit)
 
             if [ -z "$SETTINGS" ]; then
               echo "ERROR: settings.gradle(.kts) tidak ditemukan."
-              find project -maxdepth 5 -type f | sort
               exit 1
             fi
 
@@ -85,35 +84,44 @@ jobs:
           set -e
 
           if [ -d "/usr/local/lib/android/sdk" ]; then
-            echo "Android SDK ditemukan."
-            echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-            echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-            echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-            echo "/usr/local/lib/android/sdk/platform-tools" >> "$GITHUB_PATH"
-          elif [ -d "$ANDROID_SDK_ROOT" ]; then
-            echo "Android SDK: $ANDROID_SDK_ROOT"
+            SDK="/usr/local/lib/android/sdk"
+          elif [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK="$ANDROID_SDK_ROOT"
+          elif [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
           else
             echo "ERROR: Android SDK tidak ditemukan."
             exit 1
           fi
 
-      - name: Check Android SDK
+          echo "Android SDK: $SDK"
+
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          if [ -d "$SDK/cmdline-tools/latest/bin" ]; then
+            echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          fi
+
+          if [ -d "$SDK/platform-tools" ]; then
+            echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          fi
+
+      - name: Verify Android SDK
         shell: bash
         run: |
-          set -e
-
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
           echo
-          echo "Installed SDK platforms:"
+          echo "Platforms:"
           ls -lah "$ANDROID_SDK_ROOT/platforms" || true
 
           echo
-          echo "Installed build tools:"
+          echo "Build tools:"
           ls -lah "$ANDROID_SDK_ROOT/build-tools" || true
 
-      - name: Install Android SDK 36 if needed
+      - name: Install Android SDK 36
         shell: bash
         run: |
           set -e
@@ -121,18 +129,25 @@ jobs:
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
           if [ -x "$SDKMANAGER" ]; then
+
             if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" ]; then
-              echo "Installing Android platform 36..."
-              yes | "$SDKMANAGER" --licenses >/dev/null || true
+              echo "Installing Android 36..."
+              yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
               "$SDKMANAGER" "platforms;android-36"
+            else
+              echo "Android 36 already installed."
             fi
 
             if [ ! -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ]; then
               echo "Installing Build Tools 36.0.0..."
               "$SDKMANAGER" "build-tools;36.0.0"
+            else
+              echo "Build Tools 36.0.0 already installed."
             fi
+
           else
-            echo "sdkmanager tidak tersedia. Menggunakan SDK yang sudah terpasang."
+            echo "sdkmanager tidak tersedia."
+            echo "Menggunakan Android SDK bawaan runner."
           fi
 
       - name: Setup Gradle
@@ -141,28 +156,41 @@ jobs:
           gradle-version: "9.3.1"
           cache-disabled: true
 
-      - name: Show Gradle environment
+      - name: Verify Java and Gradle
+        shell: bash
+        run: |
+          java -version
+          echo
+          gradle --version
+
+      - name: Verify project
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
+        run: |
+          echo "Project directory:"
+          pwd
+
+          echo
+          echo "Project files:"
+          find . -maxdepth 2 -type f | sort
+
+          echo
+          echo "Gradle files:"
+          find . -maxdepth 3 \
+            \( -name "*.gradle" -o -name "*.gradle.kts" \) \
+            -print | sort
+
+      - name: Clean
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           set -e
 
-          echo "Java:"
-          java -version
-
-          echo
-          echo "Gradle:"
-          gradle --version
-
-          echo
-          echo "Project:"
-          pwd
-
-          echo
-          echo "Gradle files:"
-          find . -maxdepth 3 \
-            \( -name "*.gradle" -o -name "*.gradle.kts" -o -name "libs.versions.toml" \) \
-            -print | sort
+          gradle clean \
+            --no-daemon \
+            --no-configuration-cache \
+            --no-parallel \
+            --console=plain
 
       - name: Build APK
         working-directory: ${{ steps.project.outputs.project_dir }}
@@ -171,25 +199,26 @@ jobs:
           set -o pipefail
 
           echo "========================================"
-          echo "START BUILD"
+          echo "BUILD zOpoiii DOWNLOADER"
           echo "========================================"
 
-          gradle clean assembleDebug \
+          gradle assembleDebug \
             -x processDebugGoogleServices \
+            --no-daemon \
+            --no-configuration-cache \
+            --no-parallel \
             --stacktrace \
             --info \
-            --no-daemon \
             --console=plain \
             2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      - name: Diagnose build failure
+      - name: Diagnose failure
         if: failure()
-        working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
           echo
           echo "========================================"
-          echo "BUILD FAILED - DIAGNOSTIC"
+          echo "BUILD FAILED"
           echo "========================================"
 
           if [ ! -f "$GITHUB_WORKSPACE/build.log" ]; then
@@ -198,41 +227,25 @@ jobs:
           fi
 
           echo
-          echo "===== GRADLE ERROR LINES ====="
+          echo "===== FAILURE ====="
 
           grep -n -i -E \
-            "FAILURE:|What went wrong:|Execution failed|Caused by:|error:|ERROR|AAPT|Android resource linking failed|failed linking references|Duplicate class|Could not resolve|Could not find|Permission denied|Compilation failed" \
+            "FAILURE:|What went wrong:|Execution failed|Caused by:" \
+            "$GITHUB_WORKSPACE/build.log" \
+            | tail -100 || true
+
+          echo
+          echo "===== ERRORS ====="
+
+          grep -n -i -E \
+            "error:|ERROR|AAPT|Android resource linking failed|failed linking references|Duplicate class|Could not resolve|Could not find|Compilation failed" \
             "$GITHUB_WORKSPACE/build.log" \
             | tail -200 || true
 
           echo
-          echo "===== RESOURCE ERRORS ====="
+          echo "===== LAST 400 LINES ====="
 
-          grep -n -i -E -A 25 -B 15 \
-            "AAPT|Android resource linking failed|failed linking references|resource .* not found|error: resource" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -300 || true
-
-          echo
-          echo "===== DUPLICATE CLASS ERRORS ====="
-
-          grep -n -i -E -A 15 -B 5 \
-            "Duplicate class|duplicate classes" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-          echo
-          echo "===== DEPENDENCY ERRORS ====="
-
-          grep -n -i -E -A 15 -B 5 \
-            "Could not resolve|Could not find|failed to resolve|dependency" \
-            "$GITHUB_WORKSPACE/build.log" \
-            | tail -200 || true
-
-          echo
-          echo "===== LAST 300 LOG LINES ====="
-
-          tail -300 "$GITHUB_WORKSPACE/build.log"
+          tail -400 "$GITHUB_WORKSPACE/build.log"
 
       - name: Upload build log
         if: always()
@@ -247,20 +260,13 @@ jobs:
         working-directory: ${{ steps.project.outputs.project_dir }}
         shell: bash
         run: |
-          set -e
-
-          echo "APK hasil build:"
-
-          find . \
-            -type f \
-            -name "*.apk" \
-            -print
+          echo "APK:"
+          find . -type f -name "*.apk" -print
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: zOpoiii-Downloader-debug
-          path: |
-            project/**/build/outputs/apk/debug/*.apk
+          path: project/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
