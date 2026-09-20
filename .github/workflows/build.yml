@@ -1,127 +1,139 @@
 name: Build zOpoiii Downloader
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show repository
+      - name: Find ZIP project
+        id: zip
+        shell: bash
         run: |
           set -e
 
-          echo "=== REPOSITORY ==="
-          pwd
-          ls -lah
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
 
-          echo ""
-          echo "=== ZIP FILES ==="
-          find . -maxdepth 1 -type f -iname "*.zip" -print
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP project tidak ditemukan."
+            echo "Isi repository:"
+            ls -lah
+            exit 1
+          fi
 
-      - name: Find and extract project ZIP
+          echo "ZIP ditemukan: $ZIP_FILE"
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract project
+        shell: bash
         run: |
           set -e
 
           rm -rf project
           mkdir -p project
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
+          unzip -q "${{ steps.zip.outputs.zip_file }}" -d project
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP project tidak ditemukan."
-            ls -lah
-            exit 1
-          fi
-
-          echo "Project ZIP:"
-          echo "$ZIP_FILE"
-
-          unzip -q "$ZIP_FILE" -d project
-
-          echo ""
-          echo "=== EXTRACTED PROJECT ==="
+          echo "Isi project:"
           find project -maxdepth 3 -type f | head -100
 
-      - name: Detect project root
+      - name: Detect Gradle project
+        id: project
+        shell: bash
         run: |
           set -e
 
           if [ -f "project/settings.gradle.kts" ] || [ -f "project/settings.gradle" ]; then
-            echo "PROJECT_DIR=project" >> "$GITHUB_ENV"
-            exit 0
+            PROJECT_DIR="project"
+          else
+            SETTINGS=$(find project -maxdepth 4 \
+              \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+              -print -quit)
+
+            if [ -z "$SETTINGS" ]; then
+              echo "ERROR: settings.gradle(.kts) tidak ditemukan."
+              find project -maxdepth 5 -type f | sort
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$SETTINGS")
           fi
 
-          FOUND=$(find project -mindepth 1 -maxdepth 3 \
-            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-            -print -quit)
+          echo "Gradle project: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          if [ -z "$FOUND" ]; then
-            echo "ERROR: settings.gradle(.kts) tidak ditemukan."
-            find project -maxdepth 5 -type f
-            exit 1
-          fi
-
-          ROOT=$(dirname "$FOUND")
-
-          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
-
-          echo "Project root:"
-          echo "$ROOT"
-
-      - name: Setup JDK 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Detect Android SDK
+        shell: bash
         run: |
           set -e
 
-          if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
-            SDK="$ANDROID_HOME"
-          elif [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
-            SDK="$ANDROID_SDK_ROOT"
-          elif [ -d "/usr/local/lib/android/sdk" ]; then
-            SDK="/usr/local/lib/android/sdk"
+          if [ -d "/usr/local/lib/android/sdk" ]; then
+            echo "Android SDK ditemukan."
+            echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+            echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+            echo "/usr/local/lib/android/sdk/platform-tools" >> "$GITHUB_PATH"
+          elif [ -d "$ANDROID_SDK_ROOT" ]; then
+            echo "Android SDK: $ANDROID_SDK_ROOT"
           else
             echo "ERROR: Android SDK tidak ditemukan."
             exit 1
           fi
 
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
-          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-          echo "Android SDK: $SDK"
-
-      - name: Install Android SDK packages
+      - name: Check Android SDK
+        shell: bash
         run: |
           set -e
 
-          SDK="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          if [ ! -d "$SDK/platforms/android-36" ]; then
-            sdkmanager "platforms;android-36"
+          echo
+          echo "Installed SDK platforms:"
+          ls -lah "$ANDROID_SDK_ROOT/platforms" || true
+
+          echo
+          echo "Installed build tools:"
+          ls -lah "$ANDROID_SDK_ROOT/build-tools" || true
+
+      - name: Install Android SDK 36 if needed
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ -x "$SDKMANAGER" ]; then
+            if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" ]; then
+              echo "Installing Android platform 36..."
+              yes | "$SDKMANAGER" --licenses >/dev/null || true
+              "$SDKMANAGER" "platforms;android-36"
+            fi
+
+            if [ ! -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ]; then
+              echo "Installing Build Tools 36.0.0..."
+              "$SDKMANAGER" "build-tools;36.0.0"
+            fi
+          else
+            echo "sdkmanager tidak tersedia. Menggunakan SDK yang sudah terpasang."
           fi
-
-          if [ ! -d "$SDK/build-tools/36.0.0" ]; then
-            sdkmanager "build-tools;36.0.0"
-          fi
-
-          echo "=== ANDROID SDK ==="
-          ls -lah "$SDK/platforms"
-          ls -lah "$SDK/build-tools"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -129,106 +141,126 @@ jobs:
           gradle-version: "9.3.1"
           cache-disabled: true
 
-      - name: Check project
-        working-directory: ${{ env.PROJECT_DIR }}
+      - name: Show Gradle environment
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
-          echo "=== PROJECT ==="
-          pwd
-          ls -lah
+          set -e
 
-          echo ""
-          echo "=== APP ==="
-          ls -lah app
+          echo "Java:"
+          java -version
 
-          echo ""
-          echo "=== GRADLE FILES ==="
-          find . -maxdepth 3 \
-            \( \
-              -name "build.gradle" \
-              -o -name "build.gradle.kts" \
-              -o -name "settings.gradle" \
-              -o -name "settings.gradle.kts" \
-              -o -name "libs.versions.toml" \
-            \) \
-            -print
-
-      - name: Check Gradle
-        run: |
+          echo
+          echo "Gradle:"
           gradle --version
 
+          echo
+          echo "Project:"
+          pwd
+
+          echo
+          echo "Gradle files:"
+          find . -maxdepth 3 \
+            \( -name "*.gradle" -o -name "*.gradle.kts" -o -name "libs.versions.toml" \) \
+            -print | sort
+
       - name: Build APK
-        working-directory: ${{ env.PROJECT_DIR }}
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
           set -o pipefail
+
+          echo "========================================"
+          echo "START BUILD"
+          echo "========================================"
 
           gradle clean assembleDebug \
             -x processDebugGoogleServices \
             --stacktrace \
+            --info \
             --no-daemon \
             --console=plain \
-            2>&1 | tee build.log
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      - name: Diagnose resource failure
+      - name: Diagnose build failure
         if: failure()
-        working-directory: ${{ env.PROJECT_DIR }}
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
-          echo ""
-          echo "=========================================="
-          echo "RESOURCE BUILD ERROR"
-          echo "=========================================="
+          echo
+          echo "========================================"
+          echo "BUILD FAILED - DIAGNOSTIC"
+          echo "========================================"
 
-          echo ""
-          echo "=== AAPT / RESOURCE ERRORS ==="
+          if [ ! -f "$GITHUB_WORKSPACE/build.log" ]; then
+            echo "build.log tidak ditemukan."
+            exit 0
+          fi
 
-          grep -i -E \
-            -A 20 -B 10 \
-            "AAPT|resource .* not found|error:.*resource|Android resource linking failed|failed linking references|processDebugResources" \
-            build.log || true
+          echo
+          echo "===== GRADLE ERROR LINES ====="
 
-          echo ""
-          echo "=== ALL ERROR LINES ==="
+          grep -n -i -E \
+            "FAILURE:|What went wrong:|Execution failed|Caused by:|error:|ERROR|AAPT|Android resource linking failed|failed linking references|Duplicate class|Could not resolve|Could not find|Permission denied|Compilation failed" \
+            "$GITHUB_WORKSPACE/build.log" \
+            | tail -200 || true
 
-          grep -i -E \
-            "error:|ERROR:|FAILED|FAILURE|Caused by:" \
-            build.log | tail -300 || true
+          echo
+          echo "===== RESOURCE ERRORS ====="
 
-          echo ""
-          echo "=== FAILED TASK ==="
+          grep -n -i -E -A 25 -B 15 \
+            "AAPT|Android resource linking failed|failed linking references|resource .* not found|error: resource" \
+            "$GITHUB_WORKSPACE/build.log" \
+            | tail -300 || true
 
-          grep -i -A 30 -B 10 \
-            "> Task .* FAILED" \
-            build.log || true
+          echo
+          echo "===== DUPLICATE CLASS ERRORS ====="
 
-          echo ""
-          echo "=== LAST 250 LINES ==="
+          grep -n -i -E -A 15 -B 5 \
+            "Duplicate class|duplicate classes" \
+            "$GITHUB_WORKSPACE/build.log" \
+            | tail -200 || true
 
-          tail -250 build.log
+          echo
+          echo "===== DEPENDENCY ERRORS ====="
+
+          grep -n -i -E -A 15 -B 5 \
+            "Could not resolve|Could not find|failed to resolve|dependency" \
+            "$GITHUB_WORKSPACE/build.log" \
+            | tail -200 || true
+
+          echo
+          echo "===== LAST 300 LOG LINES ====="
+
+          tail -300 "$GITHUB_WORKSPACE/build.log"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Find APK
         if: success()
-        working-directory: ${{ env.PROJECT_DIR }}
+        working-directory: ${{ steps.project.outputs.project_dir }}
+        shell: bash
         run: |
-          echo "=== GENERATED APK ==="
+          set -e
 
-          find app/build/outputs/apk \
+          echo "APK hasil build:"
+
+          find . \
             -type f \
             -name "*.apk" \
             -print
-
-          APK_COUNT=$(find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" | wc -l)
-
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: APK tidak ditemukan."
-            exit 1
-          fi
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: zOpoiii-Downloader
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: zOpoiii-Downloader-debug
+          path: |
+            project/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 14
